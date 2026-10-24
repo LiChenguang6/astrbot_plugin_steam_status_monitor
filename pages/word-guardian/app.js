@@ -138,6 +138,53 @@ function dashboard() {
   h += `<div class="card"><div class="card-head"><h2>最近的学习记录</h2><button class="link-button" data-action="navigate" data-page="history">查看全部 ↗</button></div>${recordTable(snapshot.records.filter((r) => r.profile === selected).slice(0, 5))}</div>`;
   return h;
 }
+function archivedPlans() {
+  if (!snapshot.archived?.length) return "";
+  return `<section class="card" style="margin-top:20px"><h2>已归档计划</h2><p class="subtitle">这些计划已停止识别和提醒，保留的记录可在学习记录中查看和导出。</p>${snapshot.archived.map((p) => `<p class="subtitle">${esc(p.name)} · ${esc(p.id)} · ${esc(p.deleted.slice(0, 10))}</p>`).join("")}</section>`;
+}
+function openDelete(ident) {
+  const p = snapshot.profiles.find((p) => p.id === ident);
+  if (!p) return;
+  $("#delete-form").dataset.id = ident;
+  $("#delete-description").textContent = `${p.config.name} · ${ident}`;
+  $("#delete-confirm").value = "";
+  $("#delete-history").checked = false;
+  $("#delete-error").hidden = true;
+  $("#delete-dialog").showModal();
+}
+$("#delete-cancel").addEventListener("click", () =>
+  $("#delete-dialog").close(),
+);
+$("#delete-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = e.target.dataset.id;
+  if ($("#delete-confirm").value !== id) {
+    $("#delete-error").textContent = "请输入完整计划ID确认删除";
+    $("#delete-error").hidden = false;
+    return;
+  }
+  const button = e.target.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await api("POST", "profile/delete", {
+      id,
+      confirm_id: $("#delete-confirm").value,
+      purge_history: $("#delete-history").checked,
+    });
+    $("#delete-dialog").close();
+    toast(
+      result.history_retained
+        ? "计划已删除，历史已保留"
+        : "计划与学习记录已删除",
+    );
+    await refresh();
+  } catch (err) {
+    $("#delete-error").textContent = err.message;
+    $("#delete-error").hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
 function plans() {
   return (
     title(
@@ -146,8 +193,9 @@ function plans() {
       `<button class="primary" data-action="new-plan">＋ 新建计划</button>`,
     ) +
     (snapshot.profiles.length
-      ? `<div class="plan-list">${snapshot.profiles.map((p) => `<div class="card"><div class="card-head"><h2>${esc(p.config.name)}</h2><span class="badge ${p.config.enabled ? "" : "pending"}">${p.config.enabled ? "进行中" : "已暂停 / 草稿"}</span></div><p class="subtitle">${esc(p.id)} · ${esc(p.config.timezone)}</p><div class="plan-meta"><div><small>每日新学 / 复习</small>${p.config.new_goal} / ${p.config.review_goal} 个</div><div><small>提醒时间</small>${esc(p.config.morning)} · ${esc(p.config.evening)}</div><div><small>机器人 / 适配器</small>${esc(p.config.bot_id || "等待群内绑定")}<small>${esc(p.config.platform_id)}</small></div><div><small>群聊 / 成员</small>${esc(p.config.group_id || "尚未绑定")}<small>${esc(p.config.user_ids.join("、"))}</small></div></div><div class="actions"><button class="primary" data-action="edit-plan" data-id="${esc(p.id)}">管理计划</button><button class="secondary" data-action="copy-plan" data-id="${esc(p.id)}">复制为独立计划</button><button class="secondary" data-action="toggle-plan" data-id="${esc(p.id)}">${p.config.enabled ? "暂停" : "启用"}</button></div>${stateWarning(p)}</div>`).join("")}</div>`
-      : empty())
+      ? `<div class="plan-list">${snapshot.profiles.map((p) => `<div class="card"><div class="card-head"><h2>${esc(p.config.name)}</h2><span class="badge ${p.config.enabled ? "" : "pending"}">${p.config.enabled ? "进行中" : "已暂停 / 草稿"}</span></div><p class="subtitle">${esc(p.id)} · ${esc(p.config.timezone)}</p><div class="plan-meta"><div><small>每日新学 / 复习</small>${p.config.new_goal} / ${p.config.review_goal} 个</div><div><small>提醒时间</small>${esc(p.config.morning)} · ${esc(p.config.evening)}</div><div><small>机器人 / 适配器</small>${esc(p.config.bot_id || "等待群内绑定")}<small>${esc(p.config.platform_id)}</small></div><div><small>群聊 / 成员</small>${esc(p.config.group_id || "尚未绑定")}<small>${esc(p.config.user_ids.join("、"))}</small></div></div><div class="actions"><button class="primary" data-action="edit-plan" data-id="${esc(p.id)}">管理计划</button><button class="secondary" data-action="copy-plan" data-id="${esc(p.id)}">复制为独立计划</button><button class="secondary" data-action="toggle-plan" data-id="${esc(p.id)}">${p.config.enabled ? "暂停" : "启用"}</button><button class="danger" data-action="delete-plan" data-id="${esc(p.id)}">删除计划</button></div>${stateWarning(p)}</div>`).join("")}</div>`
+      : empty()) +
+    archivedPlans()
   );
 }
 const fieldInfo = {
@@ -224,7 +272,9 @@ function field(key, cfg) {
   return `<label class="field ${area ? "full" : ""}"><span>${label}</span>${area ? `<textarea name="${key}" rows="3">${esc(val)}</textarea>` : `<input name="${key}" type="${inputType}" ${inputType === "number" ? 'min="0" step="any"' : ""} ${key.includes("provider_id") ? 'list="models"' : ""} value="${esc(val)}">`}<small>${hint}</small></label>`;
 }
 function nextPlanId(base = "member") {
-  const ids = new Set(snapshot.profiles.map((p) => p.id));
+  const ids = new Set(
+    snapshot.reserved_ids || snapshot.profiles.map((p) => p.id),
+  );
   const stem = base.slice(0, 48);
   if (!ids.has(stem)) return stem;
   let n = 2;
@@ -479,6 +529,7 @@ document.addEventListener("click", async (e) => {
     } else if (action === "new-plan") editPlan("");
     else if (action === "edit-plan") editPlan(b.dataset.id);
     else if (action === "copy-plan") editPlan("", b.dataset.id);
+    else if (action === "delete-plan") openDelete(b.dataset.id);
     else if (action === "toggle-plan") {
       const p = snapshot.profiles.find((p) => p.id === b.dataset.id);
       await api("POST", "profile", {

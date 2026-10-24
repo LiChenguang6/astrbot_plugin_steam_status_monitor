@@ -13,11 +13,16 @@ def local_now(cfg, now=None):
     return value.astimezone(ZoneInfo(cfg["timezone"]))
 
 
-def matches(cfg, *, platform, bot, group, user):
+def same_bot(expected, actual, *, official=False):
+    placeholders = {"", "qq_official", "unknown_selfid"}
+    return str(expected) == str(actual) or (official and (str(expected) in placeholders or str(actual) in placeholders))
+
+
+def matches(cfg, *, platform, bot, group, user, official=False):
     return cfg["enabled"] and all(
         (
             cfg["platform_id"] == str(platform),
-            cfg["bot_id"] == str(bot),
+            same_bot(cfg["bot_id"], bot, official=official),
             cfg["group_id"] == str(group),
             str(user) in cfg["user_ids"],
         )
@@ -101,6 +106,9 @@ class Scheduler:
             if not cfg["enabled"]:
                 continue
             async with self.locks.setdefault(ident, asyncio.Lock()):
+                cfg = self.store.profiles().get(ident)
+                if not cfg or not cfg["enabled"]:
+                    continue
                 try:
                     stamp = local_now(cfg, now)
                     state = status(self.store, ident, cfg, stamp)

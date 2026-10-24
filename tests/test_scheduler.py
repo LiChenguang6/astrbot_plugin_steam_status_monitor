@@ -118,3 +118,21 @@ async def test_multiple_members_get_independent_named_reminders_and_debt(store, 
     assert len(sent) == 3
     assert "新学 20" in sent[1] and "复习 40" in sent[1]
     assert "新学 20" in sent[2] and "复习 40" in sent[2]  # Only the second account carries Saturday's debt.
+
+
+async def test_waiting_scheduler_skips_plan_deleted_before_it_gains_lock(store, cfg):
+    store.save_profile("p", cfg)
+    lock = asyncio.Lock()
+    await lock.acquire()
+    sent = []
+
+    async def send(c, text):
+        sent.append(text)
+
+    scheduler = Scheduler(store, send, {"p": lock})
+    waiting = asyncio.create_task(scheduler.tick(stamp()))
+    await asyncio.sleep(0)
+    store.delete_profile("p")
+    lock.release()
+    await waiting
+    assert not sent and not store.claimed("p", "2026-10-24", "morning")

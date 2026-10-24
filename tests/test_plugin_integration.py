@@ -63,6 +63,21 @@ class Event:
         self.sender = sender
         self.group = group
         self.replies = []
+        self.stopped = False
+        self.extras = {}
+        self.is_at_or_wake_command = True
+
+    def stop_event(self):
+        self.stopped = True
+
+    def is_stopped(self):
+        return self.stopped
+
+    def get_extra(self, key, default=None):
+        return self.extras.get(key, default)
+
+    def clear_result(self):
+        pass
 
     def get_platform_id(self):
         return "qq-family"
@@ -168,6 +183,147 @@ async def test_actual_entry_clear_undated_image_automatically_records(plugin):
     assert row["status"] == "accepted"
     assert (row["learned"], row["reviewed"]) == (20, 40)
     assert "已记录" in e.replies[0] and "待审核" not in e.replies[0]
+
+
+@pytest.mark.parametrize("bot", ["qq_official", "unknown_selfid", ""])
+async def test_official_unmentioned_image_with_placeholder_self_id_is_recorded(plugin, bot):
+    e = Event([screenshot()])
+    e.get_self_id = lambda: bot
+    await plugin.watch(e)
+    assert plugin.store.records()[0]["status"] == "accepted"
+    assert e.stopped and len(e.replies) == 1
+
+
+async def test_placeholder_identity_cannot_cross_platform_or_member_boundary(plugin):
+    e = Event([screenshot()], sender="not-sister")
+    e.get_self_id = lambda: "qq_official"
+    await plugin.watch(e)
+    e.sender = "sister-openid"
+    e.get_platform_id = lambda: "different-bot-instance"
+    await plugin.watch(e)
+    assert not plugin.store.records() and not plugin.context.calls
+    assert not e.stopped
+
+
+async def test_placeholder_rebinding_keeps_original_bot_identity_and_history(plugin):
+    await plugin.ingest(Event(text="/单词打卡 新学20 复习40"), explicit=True)
+    e = Event(sender="admin")
+    e.get_self_id = lambda: "qq_official"
+    replies = [r async for r in plugin.bind(e, target="sister-openid")]
+    assert "已绑定计划 family" in replies[0]
+    assert plugin.store.profiles()["family"]["bot_id"] == "bot-1"
+    assert len(plugin.store.profiles()) == 1
+
+
+@pytest.mark.parametrize(
+    "relevant,member,expect_claim",
+    [(True, "sister-openid", True), (False, "sister-openid", False), (True, "someone-else", False)],
+)
+async def test_native_sdk_dispatch_prioritizes_checkin_over_proactive_reply(
+    plugin, monkeypatch, relevant, member, expect_claim
+):
+    from dataclasses import replace
+    from astrbot.core.pipeline.process_stage.stage import StarRequestSubStage
+    from astrbot.core.star.star import star_map
+    from astrbot.core.star.star_handler import StarHandlerRegistry, star_handlers_registry
+
+    actual = next(
+        h for h in star_handlers_registry if h.handler_module_path == plugin.__module__ and h.handler_name == "watch"
+    )
+    assert actual.extras_configs["priority"] == 1000
+    called = []
+
+    async def proactive(event):
+        called.append("proactive probability=1")
+
+    proactive_md = replace(
+        actual,
+        handler_name="proactive",
+        handler_full_name="test-proactive",
+        handler=proactive,
+        extras_configs={"priority": 0},
+    )
+    registry = StarHandlerRegistry()
+    registry.append(proactive_md)
+    registry.append(replace(actual, handler=plugin.watch))
+    event = Event([screenshot()], sender=member)
+    event.get_self_id = lambda: "qq_official"
+    event.extras["activated_handlers"] = registry._handlers
+    event.extras["handlers_parsed_params"] = {}
+    monkeypatch.setitem(star_map, plugin.__module__, SimpleNamespace(name="qq_word_guardian"))
+    plugin.context.model_result["relevant"] = relevant
+    stage = StarRequestSubStage()
+    [value async for value in stage.process(event)]
+    assert bool(called) is (not expect_claim)
+    assert event.stopped is expect_claim
+
+
+async def test_delete_plan_requires_confirmation_and_retains_history_by_default(plugin):
+    register(plugin)
+    await plugin.ingest(Event(text="/单词打卡 新学20 复习40"), explicit=True)
+    response, _ = await call(plugin, "profile/delete", {"id": "family", "confirm_id": "wrong"})
+    assert response.status_code == 400 and "family" in plugin.store.profiles()
+    response, data = await call(plugin, "profile/delete", {"id": "family", "confirm_id": "family"})
+    assert response.status_code == 200 and data["history_retained"]
+    assert not plugin.store.profiles() and plugin.store.archived()[0]["id"] == "family"
+    assert plugin.store.totals("family")["2026-10-24"]["new"] == 20
+    assert not plugin.targets(Event())
+    assert "family" in plugin.store.reserved_ids()
+
+
+async def test_delete_with_purge_only_removes_selected_plan_data(plugin, cfg):
+    register(plugin)
+    plugin.store.save_profile("second", dict(cfg, user_ids=["second"]))
+    for ident in ("family", "second"):
+        plugin.store.add(
+            ident, "2026-10-24", {"new": 20, "review": 40, "confidence": 1}, ident, "image", "confirmed", True, [ident]
+        )
+        plugin.store.mark_sent(ident, "2026-10-24", "morning")
+    response, data = await call(
+        plugin, "profile/delete", {"id": "family", "confirm_id": "family", "purge_history": True}
+    )
+    assert response.status_code == 200 and not data["history_retained"]
+    assert not plugin.store.records("family")
+    assert len(plugin.store.records("second")) == 1
+    assert not plugin.store.db.execute("SELECT 1 FROM evidence WHERE profile='family'").fetchone()
+    assert plugin.store.claimed("second", "2026-10-24", "morning")
+
+
+async def test_queued_image_does_not_record_after_plan_deleted(plugin):
+    lock = plugin.locks.setdefault("family", asyncio.Lock())
+    await lock.acquire()
+    event = Event([screenshot()])
+    waiting = asyncio.create_task(plugin.ingest(event))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    plugin.store.delete_profile("family")
+    lock.release()
+    await waiting
+    assert not plugin.store.records() and not plugin.context.calls
+    with pytest.raises(ValueError, match="已归档"):
+        plugin.store.save_profile("family", plugin.store.profiles().get("family", {}))
+
+
+async def test_deleted_plan_id_is_not_reused_by_automatic_binding(plugin):
+    plugin.store.delete_profile("family")
+    replies = [r async for r in plugin.bind(Event(sender="admin"), target="sister-openid")]
+    assert "已绑定计划 member_" in replies[0]
+    assert "family" not in plugin.store.profiles()
+
+
+async def test_official_placeholder_cannot_create_overlapping_active_plan_via_panel(plugin, cfg):
+    register(plugin)
+    response, _ = await call(plugin, "profile", {"id": "duplicate", "config": dict(cfg, bot_id="qq_official")})
+    assert response.status_code == 400
+
+
+async def test_nonofficial_or_real_different_bot_does_not_match_placeholder_exception(plugin):
+    e = Event([screenshot()])
+    e.get_self_id = lambda: "bot-other"
+    assert not plugin.targets(e)
+    e.get_self_id = lambda: "qq_official"
+    e.get_platform_name = lambda: "aiocqhttp"
+    assert not plugin.targets(e)
 
 
 async def test_multiple_accounts_bind_without_reusing_family_and_keep_separate_ledgers(plugin):
@@ -330,6 +486,7 @@ async def test_official_reminder_calls_proactive_api_without_expired_msgid(plugi
     [
         ("snapshot", "GET"),
         ("profile", "POST"),
+        ("profile/delete", "POST"),
         ("review", "POST"),
         ("manual", "POST"),
         ("test-send", "POST"),

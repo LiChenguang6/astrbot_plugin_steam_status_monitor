@@ -1,7 +1,7 @@
 name: qq_word_guardian
 display_name: QQ 单词守护
 desc: QQ群单词学习打卡、截图识别、休息日提醒、漏学补量与温柔鼓励，支持管理面板。
-version: 1.1.0
+version: 1.2.0
 author: LiChenguang6
 repo: https://github.com/LiChenguang6/astrbot_plugin_steam_status_monitor
 astrbot_version: ">=4.29.1"

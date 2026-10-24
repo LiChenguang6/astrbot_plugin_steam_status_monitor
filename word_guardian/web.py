@@ -7,7 +7,7 @@ from astrbot.api.web import error_response, json_response, request
 
 from .calendar import CalendarUnavailable, required
 from .config import DEFAULTS
-from .service import local_now, status
+from .service import local_now, same_bot, status
 
 
 class WebAPI:
@@ -18,6 +18,7 @@ class WebAPI:
         endpoints = [
             ("GET", "snapshot", self.snapshot),
             ("POST", "profile", self.profile),
+            ("POST", "profile/delete", self.delete_profile),
             ("POST", "review", self.review),
             ("POST", "manual", self.manual),
             ("POST", "test-send", self.test_send),
@@ -66,6 +67,8 @@ class WebAPI:
         return json_response(
             {
                 "profiles": plans,
+                "archived": store.archived(),
+                "reserved_ids": sorted(store.reserved_ids()),
                 "records": store.records(limit=500),
                 "audit": audit,
                 "defaults": DEFAULTS,
@@ -82,12 +85,20 @@ class WebAPI:
             if body.get("create_only") is True and ident in self.plugin.store.profiles():
                 raise ValueError("该计划ID已存在，请换一个ID新建；不会覆盖已有计划")
             # Recheck after acquiring the lock; another request may have saved while waiting.
+            platform = self.plugin.context.get_platform_inst(cfg.get("platform_id", ""))
+            official = platform is not None and platform.meta().name in (
+                "qq_official",
+                "qq_official_webhook",
+                "qqofficial",
+            )
             for other_id, other in self.plugin.store.profiles().items():
                 if other_id == ident or not other["enabled"] or not cfg.get("enabled"):
                     continue
-                if all(other[k] == cfg.get(k) for k in ("platform_id", "bot_id", "group_id")) and set(
-                    other["user_ids"]
-                ) & set(cfg.get("user_ids", [])):
+                if (
+                    all(other[k] == cfg.get(k) for k in ("platform_id", "group_id"))
+                    and same_bot(other["bot_id"], cfg.get("bot_id", ""), official=official)
+                    and set(other["user_ids"]) & set(cfg.get("user_ids", []))
+                ):
                     raise ValueError("同一机器人/群聊/成员只能启用一个计划")
             saved = self.plugin.store.save_profile(ident, cfg)
         return json_response({"config": saved})
@@ -96,6 +107,21 @@ class WebAPI:
         body = await request.json()
         self.plugin.store.decide(int(body["id"]), body["action"], body.get("new"), body.get("review"))
         return json_response({"ok": True})
+
+    async def delete_profile(self):
+        body = await request.json()
+        ident = body["id"]
+        if body.get("confirm_id") != ident:
+            raise ValueError("请输入完整计划ID确认删除")
+        purge = body.get("purge_history", False)
+        if type(purge) is not bool:
+            raise ValueError("删除历史开关必须为布尔值")
+        async with self.plugin.locks.setdefault(ident, asyncio.Lock()):
+            self.plugin.store.delete_profile(ident, purge_history=purge)
+            self.plugin.last_attempt.pop(ident, None)
+            self.plugin.errors.pop(ident, None)
+            self.plugin.scheduler.errors.pop(ident, None)
+        return json_response({"ok": True, "history_retained": not purge})
 
     async def manual(self):
         body = await request.json()

@@ -821,3 +821,16 @@ footer {
     max-width: 100%;
   }
 }
+
+#delete-dialog {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 28px;
+  background: var(--white);
+  color: var(--ink);
+  width: min(540px, 92vw);
+}
+#delete-dialog::backdrop {
+  background: #18342566;
+  backdrop-filter: blur(3px);
+}

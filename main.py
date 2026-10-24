@@ -15,7 +15,7 @@ from PIL import Image as PILImage
 from .word_guardian.config import DEFAULTS
 from .word_guardian.calendar import CalendarUnavailable
 from .word_guardian.recognition import explicit_text, recognize
-from .word_guardian.service import Scheduler, digest, feedback, local_now, matches, record, status
+from .word_guardian.service import Scheduler, digest, feedback, local_now, matches, record, same_bot, status
 from .word_guardian.store import Store
 from .word_guardian.web import WebAPI
 
@@ -83,6 +83,7 @@ class Main(Star):
                 bot=event.get_self_id(),
                 group=event.get_group_id(),
                 user=event.get_sender_id(),
+                official=event.get_platform_name() in ("qq_official", "qq_official_webhook", "qqofficial"),
             )
         ]
 
@@ -101,10 +102,15 @@ class Main(Star):
         # Multiple plans for one identity would duplicate encouragement and accounting.
         ident, cfg = targets[0]
         async with self.locks.setdefault(ident, asyncio.Lock()):
+            # A deletion/pause may have completed while this event waited for another recognition.
+            current = dict(self.targets(event))
+            if ident not in current:
+                return False
+            cfg = current[ident]
             if time.monotonic() - self.last_attempt.get(ident, -100000) < cfg["recognition_interval_seconds"]:
                 if explicit or any(isinstance(c, Image) for c in event.get_messages()):
                     await event.send(event.plain_result("刚刚处理过一次打卡，请稍后再试。"))
-                return
+                return explicit or any(isinstance(c, Image) for c in event.get_messages())
             self.last_attempt[ident] = time.monotonic()
             try:
                 images, image_hashes = [], []
@@ -114,7 +120,7 @@ class Main(Star):
                     return
                 if len(components) > 3:
                     await event.send(event.plain_result("一次最多发3张学习截图，请分开发送。"))
-                    return
+                    return True
                 async with self.capacity:
                     for component in components:
                         encoded = await asyncio.wait_for(component.convert_to_base64(), timeout=30)
@@ -141,7 +147,7 @@ class Main(Star):
                         for h in image_hashes
                     ):
                         await event.send(event.plain_result("这份截图已经记录过啦，不会重复累计。"))
-                        return
+                        return True
                     if explicit:
                         if not cfg["allow_text"]:
                             raise ValueError("此计划已关闭文字打卡，请发学习截图")
@@ -203,6 +209,7 @@ class Main(Star):
                 reply += calendar_warning
                 self.errors.pop(ident, None)
                 await event.send(event.plain_result(reply))
+                return True
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -214,22 +221,25 @@ class Main(Star):
                     else "识别暂时失败，未计入完成量。请检查面板的模型配置，或让管理员手动补录。"
                 )
                 await event.send(event.plain_result(message))
+                return True
 
-    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=1000)
     async def watch(self, event: AstrMessageEvent):
         text = event.get_message_str().lstrip()
         first = text.split(maxsplit=1)
         commands = {"单词打卡", "单词身份", "单词绑定", "单词计划", "单词进度", "单词确认", "单词帮助"}
         if text.startswith("/") or (first and first[0] in commands):
             return
-        await self.ingest(event)
+        if await self.ingest(event):
+            event.stop_event()
 
-    @filter.command("单词打卡")
+    @filter.command("单词打卡", priority=1000)
     async def checkin(self, event: AstrMessageEvent):
         if not self.targets(event):
             yield event.plain_result("当前机器人/群聊/成员尚未绑定到启用中的计划，请联系管理员。")
             return
-        await self.ingest(event, explicit=True)
+        if await self.ingest(event, explicit=True):
+            event.stop_event()
 
     @filter.command("单词身份")
     async def identity(self, event: AstrMessageEvent):
@@ -263,24 +273,34 @@ class Main(Star):
             "bot_id": str(event.get_self_id()),
             "group_id": str(event.get_group_id()),
         }
+        official = event.get_platform_name() in ("qq_official", "qq_official_webhook", "qqofficial")
+
+        def same_scope(cfg):
+            return (
+                cfg["platform_id"] == scope["platform_id"]
+                and cfg["group_id"] == scope["group_id"]
+                and same_bot(cfg["bot_id"], scope["bot_id"], official=official)
+            )
+
+        reserved = self.store.reserved_ids()
         if not plan:
-            existing = [
-                (ident, cfg)
-                for ident, cfg in profiles.items()
-                if user in cfg["user_ids"] and all(cfg[k] == value for k, value in scope.items())
-            ]
+            existing = [(ident, cfg) for ident, cfg in profiles.items() if user in cfg["user_ids"] and same_scope(cfg)]
             if existing:
                 plan = sorted(existing, key=lambda row: not row[1]["enabled"])[0][0]
-            elif "family" not in profiles or not profiles["family"]["user_ids"]:
+            elif "family" not in reserved or ("family" in profiles and not profiles["family"]["user_ids"]):
                 plan = "family"
             else:
                 key = "\0".join([*scope.values(), user])
                 plan = "member_" + hashlib.sha256(key.encode()).hexdigest()[:24]
+                base, n = plan, 2
+                while plan in reserved:
+                    plan = f"{base}_{n}"
+                    n += 1
         previous = profiles.get(plan)
         if (
             previous
             and previous["user_ids"]
-            and (user not in previous["user_ids"] or any(previous[k] and previous[k] != v for k, v in scope.items()))
+            and (user not in previous["user_ids"] or (previous["session"] and not same_scope(previous)))
         ):
             yield event.plain_result(
                 f"计划 {plan} 已绑定其他账号或群聊，不会覆盖。省略计划ID自动新建，或指定另一个计划ID。"
@@ -291,7 +311,9 @@ class Main(Star):
             cfg,
             enabled=True,
             platform_id=str(event.get_platform_id()),
-            bot_id=str(event.get_self_id()),
+            bot_id=previous["bot_id"]
+            if previous and previous["bot_id"] and same_scope(previous)
+            else str(event.get_self_id()),
             group_id=str(event.get_group_id()),
             user_ids=cfg["user_ids"] if user in cfg["user_ids"] else [user],
             session=event.unified_msg_origin,
@@ -300,7 +322,12 @@ class Main(Star):
         try:
             for other_id, other in self.store.profiles().items():
                 if other_id != plan and matches(
-                    other, platform=cfg["platform_id"], bot=cfg["bot_id"], group=cfg["group_id"], user=user
+                    other,
+                    platform=cfg["platform_id"],
+                    bot=cfg["bot_id"],
+                    group=cfg["group_id"],
+                    user=user,
+                    official=official,
                 ):
                     raise ValueError("此成员已绑定其他启用中的计划，请先停用旧计划")
             self.store.save_profile(plan, cfg)
@@ -317,7 +344,11 @@ class Main(Star):
             (ident, cfg)
             for ident, cfg in self.store.profiles().items()
             if cfg["platform_id"] == str(event.get_platform_id())
-            and cfg["bot_id"] == str(event.get_self_id())
+            and same_bot(
+                cfg["bot_id"],
+                event.get_self_id(),
+                official=event.get_platform_name() in ("qq_official", "qq_official_webhook", "qqofficial"),
+            )
             and cfg["group_id"] == str(event.get_group_id())
         ]
         if not event.get_group_id() or not plans:
@@ -348,7 +379,11 @@ class Main(Star):
         cfg = self.store.profiles().get(row["profile"]) if row else None
         if not cfg or not (
             cfg["platform_id"] == str(event.get_platform_id())
-            and cfg["bot_id"] == str(event.get_self_id())
+            and same_bot(
+                cfg["bot_id"],
+                event.get_self_id(),
+                official=event.get_platform_name() in ("qq_official", "qq_official_webhook", "qqofficial"),
+            )
             and cfg["group_id"] == str(event.get_group_id())
         ):
             yield event.plain_result("记录不存在或不属于当前机器人与群聊，请在管理面板审核。")

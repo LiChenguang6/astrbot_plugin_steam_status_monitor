@@ -31,6 +31,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS audit(
           id INTEGER PRIMARY KEY, created TEXT, action TEXT, profile TEXT, detail TEXT);
         CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS archived_profiles(id TEXT PRIMARY KEY, config TEXT NOT NULL, deleted TEXT NOT NULL);
         """)
         self.db.commit()
         self.upgrade_quantity_review()
@@ -62,6 +63,32 @@ class Store:
     def profiles(self):
         return {r["id"]: json.loads(r["config"]) for r in self.db.execute("SELECT * FROM profiles ORDER BY id")}
 
+    def archived(self):
+        return [
+            {"id": r["id"], "name": json.loads(r["config"])["name"], "deleted": r["deleted"]}
+            for r in self.db.execute("SELECT * FROM archived_profiles ORDER BY deleted DESC")
+        ]
+
+    def reserved_ids(self):
+        return {r["id"] for r in self.db.execute("SELECT id FROM profiles UNION SELECT id FROM archived_profiles")}
+
+    def delete_profile(self, ident, *, purge_history=False):
+        row = self.db.execute("SELECT config FROM profiles WHERE id=?", (ident,)).fetchone()
+        if not row:
+            raise ValueError("计划不存在或已经删除")
+        with self.db:
+            self.db.execute(
+                "INSERT INTO archived_profiles VALUES(?,?,?)",
+                (ident, row["config"], datetime.now(timezone.utc).isoformat()),
+            )
+            self.db.execute("DELETE FROM profiles WHERE id=?", (ident,))
+            if purge_history:
+                self.db.execute("DELETE FROM records WHERE profile=?", (ident,))
+                self.db.execute("DELETE FROM evidence WHERE profile=?", (ident,))
+                self.db.execute("DELETE FROM notifications WHERE profile=?", (ident,))
+                self.db.execute("DELETE FROM audit WHERE profile=?", (ident,))
+            self.audit("profile_deleted", ident, "history purged" if purge_history else "history retained")
+
     def save_profile(self, ident, raw):
         if (
             not isinstance(ident, str)
@@ -71,6 +98,8 @@ class Store:
         ):
             raise ValueError("计划ID仅支持字母、数字、横线和下划线，最多64字")
         cfg = validate(raw)
+        if self.db.execute("SELECT 1 FROM archived_profiles WHERE id=?", (ident,)).fetchone():
+            raise ValueError("该计划ID已归档，请使用新ID，避免混入旧记录")
         previous = self.profiles().get(ident)
         # Goals/calendar are historical accounting inputs. Prevent silent retroactive rewrites.
         historical = (

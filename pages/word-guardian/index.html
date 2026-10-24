@@ -30,7 +30,7 @@
           <span>小小的坚持，也值得被看见。</span>
           <p>温柔提醒 · 认真记录 · 准时休息</p>
         </div>
-        <div class="version">QQ WORD GUARDIAN <span>v1.1.0</span></div>
+        <div class="version">QQ WORD GUARDIAN <span>v1.2.0</span></div>
       </aside>
       <main>
         <header>
@@ -48,6 +48,32 @@
       </main>
     </div>
     <div id="toast" role="status" hidden></div>
+    <dialog id="delete-dialog" aria-labelledby="delete-title">
+      <form id="delete-form">
+        <h2 id="delete-title">删除计划</h2>
+        <p id="delete-description" class="subtitle"></p>
+        <p class="notice">
+          删除后停止此计划的识别和提醒。默认保留学习记录并归档计划，历史仍可查看和导出；已归档ID不能重用。
+        </p>
+        <label class="field check"
+          ><input
+            id="delete-history"
+            type="checkbox"
+          />同时删除本计划学习记录、截图去重及提醒历史（不可恢复）</label
+        >
+        <label class="field" style="margin-top: 18px"
+          ><span>输入完整计划ID确认</span
+          ><input id="delete-confirm" required autocomplete="off"
+        /></label>
+        <p id="delete-error" class="notice" role="alert" hidden></p>
+        <div class="actions" style="margin-top: 22px">
+          <button class="danger" type="submit">确认删除计划</button
+          ><button id="delete-cancel" class="secondary" type="button">
+            取消
+          </button>
+        </div>
+      </form>
+    </dialog>
     <script src="/api/plugin/page/bridge-sdk.js"></script>
     <script src="./app.js"></script>
   </body>

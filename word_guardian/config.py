@@ -116,6 +116,12 @@ def validate(raw, *, previous=None):
         parts = cfg["session"].split(":", 2)
         if len(parts) != 3 or parts[0] != cfg["platform_id"] or parts[1] != "GroupMessage":
             raise ValueError("会话必须是所选适配器的群会话，请在目标群执行 /单词绑定")
-        if parts[2] not in (cfg["group_id"], "0_" + cfg["group_id"]):
+        # AstrBot event_bus uses sender_id + "_" + group_id when unique_session
+        # is enabled. The sender here is the binding administrator, not
+        # necessarily the monitored member. Preserve the observed session.
+        group = cfg["group_id"]
+        suffix = "_" + group
+        isolated = parts[2].endswith(suffix) and len(parts[2]) > len(suffix)
+        if not group or not (parts[2] == group or isolated):
             raise ValueError("会话与群ID不一致，请重新在目标群绑定")
     return cfg

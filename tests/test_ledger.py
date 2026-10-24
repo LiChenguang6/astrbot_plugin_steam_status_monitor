@@ -160,6 +160,23 @@ def test_invalid_settings_rejected(cfg, field, value):
         validate(cfg)
 
 
+@pytest.mark.parametrize(
+    "session_id", ["group-openid", "0_group-openid", "admin-openid_group-openid", "admin_with_underscore_group-openid"]
+)
+def test_group_sessions_support_framework_isolation(cfg, session_id):
+    cfg["session"] = "qq-family:GroupMessage:" + session_id
+    assert validate(cfg)["session"] == cfg["session"]
+
+
+@pytest.mark.parametrize(
+    "session_id", ["admin_other-group", "admin_group-openid-extra", "admin_notgroup-openid", "_group-openid"]
+)
+def test_isolated_session_still_rejects_other_groups(cfg, session_id):
+    cfg["session"] = "qq-family:GroupMessage:" + session_id
+    with pytest.raises(ValueError, match="会话与群ID不一致"):
+        validate(cfg)
+
+
 def test_bound_identity_is_exact_and_aliases_work(cfg):
     fields = dict(platform="qq-family", bot="bot-1", group="group-openid", user="u_alias")
     assert matches(cfg, **fields)

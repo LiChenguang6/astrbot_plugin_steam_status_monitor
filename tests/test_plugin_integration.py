@@ -166,6 +166,22 @@ async def test_unbound_sender_or_group_never_invokes_model(plugin):
     assert not plugin.context.calls and not plugin.store.records()
 
 
+async def test_admin_binding_from_framework_isolated_group_session(plugin):
+    e = Event(sender="admin-openid")
+    e.unified_msg_origin = "qq-family:GroupMessage:admin-openid_group-openid"
+    replies = [reply async for reply in plugin.bind(e, target="sister-openid", plan="isolated")]
+    # The pre-existing active plan would conflict; pause it before binding.
+    assert "已绑定其他" in replies[0]
+    previous = plugin.store.profiles()["family"]
+    plugin.store.save_profile("family", dict(previous, enabled=False))
+    replies = [reply async for reply in plugin.bind(e, target="sister-openid", plan="isolated")]
+    assert "已绑定计划 isolated" in replies[0]
+    saved = plugin.store.profiles()["isolated"]
+    assert saved["session"] == e.unified_msg_origin
+    assert saved["group_id"] == "group-openid"
+    assert saved["user_ids"] == ["sister-openid"]
+
+
 async def test_text_command_uses_persons_cumulative_not_model(plugin):
     e = Event(text="/单词打卡 新学20 复习40")
     await plugin.ingest(e, explicit=True)

@@ -143,7 +143,8 @@ def screenshot():
     return Image.fromBytes(stream.getvalue())
 
 
-async def test_actual_entry_image_to_pending_review_and_snapshot(plugin):
+async def test_actual_entry_unclear_image_to_pending_review_and_snapshot(plugin):
+    plugin.context.model_result["confidence"] = 0.6
     e = Event([screenshot()])
     await plugin.ingest(e)
     rows = plugin.store.records()
@@ -158,6 +159,15 @@ async def test_actual_entry_image_to_pending_review_and_snapshot(plugin):
     response, data = await call(plugin, "snapshot", method="GET")
     assert data["profiles"][0]["today"]["done_new"] == 20
     assert data["providers"] == [{"id": "vision-model"}]
+
+
+async def test_actual_entry_clear_undated_image_automatically_records(plugin):
+    e = Event([screenshot()])
+    await plugin.ingest(e)
+    row = plugin.store.records()[0]
+    assert row["status"] == "accepted"
+    assert (row["learned"], row["reviewed"]) == (20, 40)
+    assert "已记录" in e.replies[0] and "待审核" not in e.replies[0]
 
 
 async def test_unbound_sender_or_group_never_invokes_model(plugin):

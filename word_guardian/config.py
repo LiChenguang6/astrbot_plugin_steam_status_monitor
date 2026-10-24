@@ -31,7 +31,8 @@ DEFAULTS = {
     "feedback_provider_id": "",
     "auto_accept": True,
     "min_confidence": 0.90,
-    "review_undated_images": True,
+    # Legacy field retained for saved configuration compatibility; review is now quantity-based.
+    "review_undated_images": False,
     "allow_text": True,
     "ai_feedback": False,
     "recognition_interval_seconds": 15,

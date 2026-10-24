@@ -274,7 +274,7 @@ class Main(Star):
                     raise ValueError("此成员已绑定其他启用中的计划，请先停用旧计划")
             self.store.save_profile(plan, cfg)
             yield event.plain_result(
-                f"已绑定计划 {plan}。仅此机器人、此群、成员 {user} 会被记录。默认新学20/复习40；请到插件面板调整。无日期截图默认待审核。"
+                f"已绑定计划 {plan}。仅此机器人、此群、成员 {user} 会被记录。默认新学20/复习40；请到插件面板调整。按已完成数量识别，数量清晰直接记录，模糊时待审核。"
             )
         except ValueError as exc:
             yield event.plain_result(str(exc))

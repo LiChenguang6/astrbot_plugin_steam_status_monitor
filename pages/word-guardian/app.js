@@ -178,10 +178,6 @@ const fieldInfo = {
   feedback_provider_id: ["鼓励模型ID", "留空复用识别模型；无需填写API密钥"],
   auto_accept: ["高置信度自动计入", "关闭后所有打卡先待审核"],
   min_confidence: ["自动计入最低置信度", "0.5–1，推荐0.9"],
-  review_undated_images: [
-    "无日期截图人工审核",
-    "示例图只有时间没有日期，默认待审核",
-  ],
   allow_text: ["允许本人文字打卡", "/单词打卡 新学20 复习40 为当天累计"],
   ai_feedback: ["启用AI鼓励", "仅向已接入模型发送学习数量与风格"],
   recognition_interval_seconds: [
@@ -258,7 +254,6 @@ function editPlan(ident) {
         "feedback_provider_id",
         "min_confidence",
         "auto_accept",
-        "review_undated_images",
         "allow_text",
         "ai_feedback",
         "recognition_interval_seconds",
@@ -320,9 +315,9 @@ function review() {
   return (
     title(
       "让每一份努力，都记得准确",
-      "无日期、低置信度或非当天截图先确认。点“改数”可校正后计入。",
+      "已完成数量模糊或识别置信度不足时先确认；未达到目标仍可直接记录部分进度。",
     ) +
-    `<div class="notice soft">示例截图应识别为新学20、复习40；2016/4440是书本总进度。无日期截图无法证明拍摄日期，默认需要你确认。</div><div class="card">${recordTable(
+    `<div class="notice soft">示例截图应识别为新学20、复习40；2016/4440是书本总进度。数量清晰就自动记录，不因缺少日期而要求审核。</div><div class="card">${recordTable(
       snapshot.records.filter((r) => r.status === "pending"),
       true,
     )}</div>`

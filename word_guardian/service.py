@@ -38,19 +38,15 @@ def status(store, ident, cfg, now=None):
 def record(store, ident, cfg, result, fingerprint, *, image=False, image_hashes=(), now=None):
     now = local_now(cfg, now)
     day = now.date().isoformat()
-    if not result["relevant"] or (result["new"] == 0 and result["review"] == 0):
+    if not result["relevant"]:
         return {"kind": "irrelevant"}
     reasons = []
     if not cfg["auto_accept"]:
         reasons.append("已启用人工审核")
     if result["confidence"] < cfg["min_confidence"]:
         reasons.append("识别置信度不足")
-    if result["date"] and result["date"] != day:
-        reasons.append("图片日期与今天不一致，需管理员确认后按今日计入")
-    if image and not result["date"] and cfg["review_undated_images"]:
-        reasons.append("截图无明确日期，需人工确认")
     accepted = not reasons
-    reason = "; ".join(reasons) or ("图片识别通过置信度与日期校验" if image else "本人文字打卡声明（未验证图片）")
+    reason = "; ".join(reasons) or ("已完成数量识别清晰，通过置信度校验" if image else "本人文字打卡声明（未验证图片）")
     ident_record = store.add(
         ident, day, result, fingerprint, "image" if image else "text", reason, accepted, image_hashes
     )

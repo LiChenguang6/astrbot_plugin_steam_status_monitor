@@ -75,22 +75,39 @@ def test_accepted_snapshots_max_not_sum(store, cfg):
     assert status(store, "family", cfg, now())["remaining_new"] == 0
 
 
-def test_undated_sample_is_pending_then_confirmed(store, cfg):
+def test_undated_sample_is_accepted_from_completed_quantities(store, cfg):
     store.save_profile("family", cfg)
     outcome = record(store, "family", cfg, result(day=""), "a", image=True, now=now())
-    assert outcome["kind"] == "pending" and not store.totals("family")
-    store.decide(outcome["id"], "accept")
+    assert outcome["kind"] == "accepted"
     assert store.totals("family")["2026-10-24"] == {"new": 20, "review": 40}
     store.decide(outcome["id"], "reject")
     assert not store.totals("family")
 
 
-@pytest.mark.parametrize(
-    "overrides,r", [({}, result(confidence=0.6)), ({}, result(day="2026-10-23")), ({"auto_accept": False}, result())]
-)
+@pytest.mark.parametrize("overrides,r", [({}, result(confidence=0.6)), ({"auto_accept": False}, result())])
 def test_ambiguous_evidence_pending(store, cfg, overrides, r):
     cfg.update(overrides)
     assert record(store, "p", cfg, r, "abc", image=True, now=now())["kind"] == "pending"
+
+
+@pytest.mark.parametrize("day", ["", "2026-10-23", "2026-10-25"])
+def test_old_date_setting_cannot_block_clear_quantities(store, cfg, day):
+    cfg["review_undated_images"] = True  # Existing 1.0.1 saved plans must work without reconfiguration.
+    outcome = record(store, "p", cfg, result(10, 20, day=day), "a", image=True, now=now())
+    assert outcome["kind"] == "accepted"  # Partial progress is not a reason for review.
+    assert store.totals("p")["2026-10-24"] == {"new": 10, "review": 20}
+
+
+def test_unclear_zero_counts_are_pending_not_discarded(store, cfg):
+    outcome = record(store, "p", cfg, result(0, 0, day="", confidence=0.3), "a", image=True, now=now())
+    assert outcome["kind"] == "pending"
+    assert not store.totals("p")
+
+
+def test_clear_zero_counts_are_recorded_without_inventing_progress(store, cfg):
+    outcome = record(store, "p", cfg, result(0, 0, day=""), "a", image=True, now=now())
+    assert outcome["kind"] == "accepted"
+    assert store.totals("p")["2026-10-24"] == {"new": 0, "review": 0}
 
 
 def test_duplicate_image_rejected_across_days_and_mixed_messages(store, cfg):

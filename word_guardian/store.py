@@ -30,8 +30,34 @@ class Store:
           PRIMARY KEY(profile,digest));
         CREATE TABLE IF NOT EXISTS audit(
           id INTEGER PRIMARY KEY, created TEXT, action TEXT, profile TEXT, detail TEXT);
+        CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
         """)
         self.db.commit()
+        self.upgrade_quantity_review()
+
+    def upgrade_quantity_review(self):
+        """Release only date-blocked evidence already meeting the quantity threshold."""
+        marker = "quantity_review_1.0.2"
+        if self.db.execute("SELECT 1 FROM migrations WHERE name=?", (marker,)).fetchone():
+            return
+        date_reasons = ("截图无明确日期，需人工确认", "图片日期与今天不一致，需管理员确认后按今日计入")
+        with self.db:
+            for ident, cfg in self.profiles().items():
+                if not cfg.get("auto_accept", True):
+                    continue
+                updated = self.db.execute(
+                    "UPDATE records SET status='accepted', reason=? WHERE profile=? AND status='pending' "
+                    "AND source='image' AND confidence>=? AND reason IN (?,?)",
+                    (
+                        "升级：已完成数量清晰，取消仅因日期产生的审核",
+                        ident,
+                        cfg.get("min_confidence", 0.9),
+                        *date_reasons,
+                    ),
+                ).rowcount
+                if updated:
+                    self.audit("quantity_review_upgrade", ident, f"accepted={updated}; original dates/counts preserved")
+            self.db.execute("INSERT INTO migrations VALUES(?)", (marker,))
 
     def profiles(self):
         return {r["id"]: json.loads(r["config"]) for r in self.db.execute("SELECT * FROM profiles ORDER BY id")}

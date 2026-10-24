@@ -1,8 +1,1 @@
-{
-  "pages": {
-    "steam-monitor": {
-      "title": "Steam 状态监控",
-      "description": "查看统计、管理群聊与绑定，并配置每日排行榜推送"
-    }
-  }
-}
+{"pages":{"word-guardian":{"title":"单词守护","description":"学习计划、提醒时间、打卡审核、节假日日历与QQ机器人绑定"}}}

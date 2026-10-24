@@ -1,7 +1,13 @@
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+/data/
 venv/
 .vscode/
-.github/
 .git-rewrite/
 .codebuddy/
 *.lnk

@@ -1,14 +1,3 @@
-# HTTP 客户端：Steam、SteamGridDB、封面和头像请求；[socks] 提供 SOCKS4/5 代理支持
-httpx[socks]>=0.26,<1
-
-# 异步下载成就图标
-aiohttp>=3.9,<4
-
-# 图片生成、裁剪与渲染
-Pillow>=9.5,<13
-
-# 图片自动边界检测（crop_image_auto）
-numpy>=1.21,<3
-
-# 测试框架（异步测试支持）
-pytest-asyncio>=0.21,<1
+# AstrBot >=4.29.1 supplies the host, model connections and QQ adapters.
+chinese-calendar==1.11.0
+Pillow>=10,<13

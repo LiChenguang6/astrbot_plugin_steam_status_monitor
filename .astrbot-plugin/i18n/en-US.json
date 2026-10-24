@@ -1,8 +1,1 @@
-{
-  "pages": {
-    "steam-monitor": {
-      "title": "Steam Status Monitor",
-      "description": "View statistics, manage groups and bindings, and configure daily rankings"
-    }
-  }
-}
+{"pages":{"word-guardian":{"title":"Word Guardian","description":"Learning plans, reminders, check-in review and QQ bot routing"}}}

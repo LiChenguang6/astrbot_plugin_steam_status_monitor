@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>单词守护 · 慢慢积累，每天一点</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <span class="brand-icon">Aa</span>
+          <div>单词守护<small>WORD GUARDIAN</small></div>
+        </div>
+        <div class="nav-caption">学习工作台</div>
+        <nav aria-label="主导航">
+          <button data-page="dashboard" class="active">
+            ◫ <span>今日概览</span>
+          </button>
+          <button data-page="plans">☷ <span>计划与提醒</span></button>
+          <button data-page="review">
+            ✓ <span>打卡审核</span><b id="pending">0</b>
+          </button>
+          <button data-page="calendar">▦ <span>学习日历</span></button>
+          <button data-page="history">↗ <span>学习记录</span></button>
+          <button data-page="connection">⌁ <span>机器人连接</span></button>
+        </nav>
+        <div class="aside-note">
+          <span>小小的坚持，也值得被看见。</span>
+          <p>温柔提醒 · 认真记录 · 准时休息</p>
+        </div>
+        <div class="version">QQ WORD GUARDIAN <span>v1.0</span></div>
+      </aside>
+      <main>
+        <header>
+          <div class="breadcrumb">
+            学习工作台 <span>/</span> <strong id="page-name">今日概览</strong>
+          </div>
+          <button id="refresh" class="quiet">↻ 刷新数据</button>
+        </header>
+        <div id="content" aria-live="polite">
+          <div class="empty">正在连接 AstrBot 插件面板…</div>
+        </div>
+        <footer>
+          陪伴比催促更长久。所有时间以计划时区为准，默认北京时间。
+        </footer>
+      </main>
+    </div>
+    <div id="toast" role="status" hidden></div>
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

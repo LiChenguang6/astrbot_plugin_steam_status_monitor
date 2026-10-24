@@ -142,11 +142,11 @@ function plans() {
   return (
     title(
       "给学习留一点自己的节奏",
-      "每个计划独立绑定机器人、群聊与成员。历史目标变更请新建计划。",
+      "支持多个QQ账号和多个机器人。每个人独立计划，学习量与欠量不混算。",
       `<button class="primary" data-action="new-plan">＋ 新建计划</button>`,
     ) +
     (snapshot.profiles.length
-      ? `<div class="plan-list">${snapshot.profiles.map((p) => `<div class="card"><div class="card-head"><h2>${esc(p.config.name)}</h2><span class="badge ${p.config.enabled ? "" : "pending"}">${p.config.enabled ? "进行中" : "已暂停 / 草稿"}</span></div><p class="subtitle">${esc(p.id)} · ${esc(p.config.timezone)}</p><div class="plan-meta"><div><small>每日新学 / 复习</small>${p.config.new_goal} / ${p.config.review_goal} 个</div><div><small>提醒时间</small>${esc(p.config.morning)} · ${esc(p.config.evening)}</div><div><small>机器人 / 适配器</small>${esc(p.config.bot_id || "等待群内绑定")}<small>${esc(p.config.platform_id)}</small></div><div><small>群聊 / 成员</small>${esc(p.config.group_id || "尚未绑定")}<small>${esc(p.config.user_ids.join("、"))}</small></div></div><div class="actions"><button class="primary" data-action="edit-plan" data-id="${esc(p.id)}">管理计划</button><button class="secondary" data-action="toggle-plan" data-id="${esc(p.id)}">${p.config.enabled ? "暂停" : "启用"}</button></div>${stateWarning(p)}</div>`).join("")}</div>`
+      ? `<div class="plan-list">${snapshot.profiles.map((p) => `<div class="card"><div class="card-head"><h2>${esc(p.config.name)}</h2><span class="badge ${p.config.enabled ? "" : "pending"}">${p.config.enabled ? "进行中" : "已暂停 / 草稿"}</span></div><p class="subtitle">${esc(p.id)} · ${esc(p.config.timezone)}</p><div class="plan-meta"><div><small>每日新学 / 复习</small>${p.config.new_goal} / ${p.config.review_goal} 个</div><div><small>提醒时间</small>${esc(p.config.morning)} · ${esc(p.config.evening)}</div><div><small>机器人 / 适配器</small>${esc(p.config.bot_id || "等待群内绑定")}<small>${esc(p.config.platform_id)}</small></div><div><small>群聊 / 成员</small>${esc(p.config.group_id || "尚未绑定")}<small>${esc(p.config.user_ids.join("、"))}</small></div></div><div class="actions"><button class="primary" data-action="edit-plan" data-id="${esc(p.id)}">管理计划</button><button class="secondary" data-action="copy-plan" data-id="${esc(p.id)}">复制为独立计划</button><button class="secondary" data-action="toggle-plan" data-id="${esc(p.id)}">${p.config.enabled ? "暂停" : "启用"}</button></div>${stateWarning(p)}</div>`).join("")}</div>`
       : empty())
   );
 }
@@ -193,8 +193,8 @@ const fieldInfo = {
   bot_id: ["机器人身份ID", "不是AppSecret；由绑定命令捕获"],
   group_id: ["群ID / group_openid", "官方QQ群通常不是数字群号"],
   user_ids: [
-    "成员身份别名",
-    "QQ号/UID/openid，逗号分隔；仅填写该适配器实际返回的ID",
+    "同一人的身份别名",
+    "这里的QQ号/UID/openid共享账本；不同的人请各建一份独立计划",
   ],
   session: ["群会话路由", "在目标群运行绑定命令自动填入，勿猜官方会话"],
 };
@@ -223,11 +223,32 @@ function field(key, cfg) {
           : "text";
   return `<label class="field ${area ? "full" : ""}"><span>${label}</span>${area ? `<textarea name="${key}" rows="3">${esc(val)}</textarea>` : `<input name="${key}" type="${inputType}" ${inputType === "number" ? 'min="0" step="any"' : ""} ${key.includes("provider_id") ? 'list="models"' : ""} value="${esc(val)}">`}<small>${hint}</small></label>`;
 }
-function editPlan(ident) {
+function nextPlanId(base = "member") {
+  const ids = new Set(snapshot.profiles.map((p) => p.id));
+  const stem = base.slice(0, 48);
+  if (!ids.has(stem)) return stem;
+  let n = 2;
+  while (ids.has(`${stem}_${n}`)) n++;
+  return `${stem}_${n}`;
+}
+function editPlan(ident, sourceId = "") {
   const p = snapshot.profiles.find((p) => p.id === ident);
-  const c = p
-    ? structuredClone(p.config)
-    : { ...structuredClone(snapshot.defaults), start_date: dayISO() };
+  const source = snapshot.profiles.find((p) => p.id === sourceId);
+  const c = structuredClone(p?.config || source?.config || snapshot.defaults);
+  const newId = nextPlanId(
+    source
+      ? source.id + "_copy"
+      : snapshot.profiles.length
+        ? "member"
+        : "family",
+  );
+  if (!p) {
+    c.enabled = false;
+    c.start_date = dayISO();
+    c.user_ids = [];
+    c.session = "";
+    if (source) c.name = source.config.name + "（副本）";
+  }
   const sections = [
     ["基础目标", ["name", "start_date", "timezone", "new_goal", "review_goal"]],
     [
@@ -275,7 +296,7 @@ function editPlan(ident) {
       p ? "调整这份陪伴计划" : "新建学习计划",
       "建议先在目标群 /单词绑定 @妹妹；启用后只处理绑定成员的消息。",
     ) +
-    `<div class="notice">官方QQ的QQ号、UID和openid无法自动互换。若计划已有学习记录，变更目标或身份请新建计划；日期例外可用于学校临时调课。</div><form id="plan-form"><div class="card form-section"><div class="form-grid"><label class="field"><span>计划ID</span><input name="id" value="${esc(ident || "family")}" ${p ? "readonly" : ""} required pattern="[A-Za-z0-9_-]+"><small>群内绑定命令默认为 family；多个计划使用不同ID</small></label><label class="field check"><input name="enabled" type="checkbox" ${c.enabled ? "checked" : ""}>启用此计划（须先完成绑定）</label></div></div>${sections.map(([name, keys]) => `<section class="card form-section"><h2>${name}</h2><div class="form-grid">${keys.map((k) => field(k, c)).join("")}</div></section>`).join("")}<datalist id="models">${snapshot.providers.map((p) => `<option value="${esc(p.id)}"></option>`).join("")}</datalist><div class="form-actions"><button class="primary" type="submit">保存计划</button><button class="secondary" type="button" data-action="navigate" data-page="plans">取消</button></div></form>`;
+    `<div class="notice">多人打卡请各建一份计划，不要把不同人的账号放入同一份身份别名。官方QQ的QQ号、UID和openid无法自动互换。已有记录的身份与基础目标变更请新建计划。</div><form id="plan-form"><div class="card form-section"><div class="form-grid"><label class="field"><span>计划ID</span><input name="id" value="${esc(ident || newId)}" ${p ? "readonly" : ""} required pattern="[A-Za-z0-9_-]+"><small>不同账号使用不同计划ID；绑定时可指定此ID</small></label><label class="field check"><input name="enabled" type="checkbox" ${c.enabled ? "checked" : ""}>启用此计划（须先完成绑定）</label></div></div>${sections.map(([name, keys]) => `<section class="card form-section"><h2>${name}</h2><div class="form-grid">${keys.map((k) => field(k, c)).join("")}</div></section>`).join("")}<datalist id="models">${snapshot.providers.map((p) => `<option value="${esc(p.id)}"></option>`).join("")}</datalist><div class="form-actions"><button class="primary" type="submit">保存计划</button><button class="secondary" type="button" data-action="navigate" data-page="plans">取消</button></div></form>`;
   $("#plan-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
@@ -302,7 +323,11 @@ function editPlan(ident) {
                   : el.value.trim();
         if (key === "weekdays") cfg[key] = cfg[key].map(Number);
       }
-      await api("POST", "profile", { id: f.elements.id.value, config: cfg });
+      await api("POST", "profile", {
+        id: f.elements.id.value,
+        config: cfg,
+        create_only: !p,
+      });
       toast("计划已保存");
       page = "plans";
       await refresh();
@@ -453,6 +478,7 @@ document.addEventListener("click", async (e) => {
       render();
     } else if (action === "new-plan") editPlan("");
     else if (action === "edit-plan") editPlan(b.dataset.id);
+    else if (action === "copy-plan") editPlan("", b.dataset.id);
     else if (action === "toggle-plan") {
       const p = snapshot.profiles.find((p) => p.id === b.dataset.id);
       await api("POST", "profile", {

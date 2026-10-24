@@ -78,15 +78,17 @@ class WebAPI:
     async def profile(self):
         body = await request.json()
         ident, cfg = body["id"], body["config"]
-        # Avoid ambiguous overlapping plans even when aliases differ.
-        for other_id, other in self.plugin.store.profiles().items():
-            if other_id == ident or not other["enabled"] or not cfg.get("enabled"):
-                continue
-            if all(other[k] == cfg.get(k) for k in ("platform_id", "bot_id", "group_id")) and set(
-                other["user_ids"]
-            ) & set(cfg.get("user_ids", [])):
-                raise ValueError("同一机器人/群聊/成员只能启用一个计划")
         async with self.plugin.locks.setdefault(ident, asyncio.Lock()):
+            if body.get("create_only") is True and ident in self.plugin.store.profiles():
+                raise ValueError("该计划ID已存在，请换一个ID新建；不会覆盖已有计划")
+            # Recheck after acquiring the lock; another request may have saved while waiting.
+            for other_id, other in self.plugin.store.profiles().items():
+                if other_id == ident or not other["enabled"] or not cfg.get("enabled"):
+                    continue
+                if all(other[k] == cfg.get(k) for k in ("platform_id", "bot_id", "group_id")) and set(
+                    other["user_ids"]
+                ) & set(cfg.get("user_ids", [])):
+                    raise ValueError("同一机器人/群聊/成员只能启用一个计划")
             saved = self.plugin.store.save_profile(ident, cfg)
         return json_response({"config": saved})
 

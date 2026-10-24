@@ -98,3 +98,23 @@ async def test_unknown_year_pauses_and_reports_calendar(store, cfg):
     scheduler = Scheduler(store, send, {})
     await scheduler.tick(stamp(day="2099-01-01"))
     assert "CalendarUnavailable" in scheduler.errors["p"]
+
+
+async def test_multiple_members_get_independent_named_reminders_and_debt(store, cfg):
+    first = dict(cfg, name="妹妹计划")
+    second = dict(cfg, name="第二个账号", user_ids=["second"], new_goal=10, review_goal=20)
+    store.save_profile("first", first)
+    store.save_profile("second", second)
+    store.add("first", "2026-10-24", {"new": 20, "review": 40, "confidence": 1}, "a", "manual", "确认", True)
+    sent = []
+
+    async def send(c, text):
+        sent.append(text)
+
+    scheduler = Scheduler(store, send, {})
+    await scheduler.tick(stamp())
+    assert len(sent) == 1 and sent[0].startswith("【第二个账号】")
+    await scheduler.tick(stamp(day="2026-10-25"))
+    assert len(sent) == 3
+    assert "新学 20" in sent[1] and "复习 40" in sent[1]
+    assert "新学 20" in sent[2] and "复习 40" in sent[2]  # Only the second account carries Saturday's debt.

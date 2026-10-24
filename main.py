@@ -219,7 +219,7 @@ class Main(Star):
     async def watch(self, event: AstrMessageEvent):
         text = event.get_message_str().lstrip()
         first = text.split(maxsplit=1)
-        commands = {"单词打卡", "单词身份", "单词绑定", "单词进度", "单词确认", "单词帮助"}
+        commands = {"单词打卡", "单词身份", "单词绑定", "单词计划", "单词进度", "单词确认", "单词帮助"}
         if text.startswith("/") or (first and first[0] in commands):
             return
         await self.ingest(event)
@@ -239,7 +239,7 @@ class Main(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("单词绑定")
-    async def bind(self, event: AstrMessageEvent, target: str = "", plan: str = "family"):
+    async def bind(self, event: AstrMessageEvent, target: str = "", plan: str = ""):
         if not event.get_group_id():
             yield event.plain_result("请在目标QQ群内绑定。")
             return
@@ -253,16 +253,47 @@ class Main(Star):
         ]
         user = mentions[0] if mentions else target.strip()
         if not user:
-            yield event.plain_result("用法：/单词绑定 @妹妹（或她在此适配器的成员ID）。绑定前请告诉她会记录学习打卡。")
+            yield event.plain_result(
+                "用法：/单词绑定 成员ID [计划ID]。也支持@成员；省略计划ID自动创建或复用此成员的独立计划。"
+            )
             return
-        cfg = self.store.profiles().get(plan, dict(DEFAULTS))
+        profiles = self.store.profiles()
+        scope = {
+            "platform_id": str(event.get_platform_id()),
+            "bot_id": str(event.get_self_id()),
+            "group_id": str(event.get_group_id()),
+        }
+        if not plan:
+            existing = [
+                (ident, cfg)
+                for ident, cfg in profiles.items()
+                if user in cfg["user_ids"] and all(cfg[k] == value for k, value in scope.items())
+            ]
+            if existing:
+                plan = sorted(existing, key=lambda row: not row[1]["enabled"])[0][0]
+            elif "family" not in profiles or not profiles["family"]["user_ids"]:
+                plan = "family"
+            else:
+                key = "\0".join([*scope.values(), user])
+                plan = "member_" + hashlib.sha256(key.encode()).hexdigest()[:24]
+        previous = profiles.get(plan)
+        if (
+            previous
+            and previous["user_ids"]
+            and (user not in previous["user_ids"] or any(previous[k] and previous[k] != v for k, v in scope.items()))
+        ):
+            yield event.plain_result(
+                f"计划 {plan} 已绑定其他账号或群聊，不会覆盖。省略计划ID自动新建，或指定另一个计划ID。"
+            )
+            return
+        cfg = previous or dict(DEFAULTS, name=f"单词计划 · {user[-6:]}")
         cfg = dict(
             cfg,
             enabled=True,
             platform_id=str(event.get_platform_id()),
             bot_id=str(event.get_self_id()),
             group_id=str(event.get_group_id()),
-            user_ids=[user],
+            user_ids=cfg["user_ids"] if user in cfg["user_ids"] else [user],
             session=event.unified_msg_origin,
         )
         cfg["start_date"] = cfg["start_date"] or local_now(cfg).date().isoformat()
@@ -274,10 +305,30 @@ class Main(Star):
                     raise ValueError("此成员已绑定其他启用中的计划，请先停用旧计划")
             self.store.save_profile(plan, cfg)
             yield event.plain_result(
-                f"已绑定计划 {plan}。仅此机器人、此群、成员 {user} 会被记录。默认新学20/复习40；请到插件面板调整。按已完成数量识别，数量清晰直接记录，模糊时待审核。"
+                f"已绑定计划 {plan}。仅此机器人、此群、成员 {user} 会被记录。目标新学{cfg['new_goal']}/复习{cfg['review_goal']}；请到插件面板调整名称与目标。其他成员再次绑定会使用独立计划，记录与欠量分开。"
             )
         except ValueError as exc:
             yield event.plain_result(str(exc))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("单词计划")
+    async def list_plans(self, event: AstrMessageEvent):
+        plans = [
+            (ident, cfg)
+            for ident, cfg in self.store.profiles().items()
+            if cfg["platform_id"] == str(event.get_platform_id())
+            and cfg["bot_id"] == str(event.get_self_id())
+            and cfg["group_id"] == str(event.get_group_id())
+        ]
+        if not event.get_group_id() or not plans:
+            yield event.plain_result("当前群暂无计划。管理员可发送 /单词绑定 成员ID；多名成员依次绑定即可。")
+            return
+        lines = ["当前机器人与群聊的独立计划："]
+        for ident, cfg in plans:
+            lines.append(
+                f"{ident} · {cfg['name']} · {'启用' if cfg['enabled'] else '暂停'}\n成员：{', '.join(cfg['user_ids'])}；目标新学{cfg['new_goal']}/复习{cfg['review_goal']}"
+            )
+        yield event.plain_result("\n".join(lines))
 
     @filter.command("单词进度")
     async def progress(self, event: AstrMessageEvent):
@@ -308,7 +359,7 @@ class Main(Star):
     @filter.command("单词帮助")
     async def help(self, event: AstrMessageEvent):
         yield event.plain_result(
-            "单词守护：发送学习截图自动识别；/单词打卡 新学20 复习40 为当天累计量；/单词进度；/单词身份。管理员：/单词绑定 @成员、/单词确认 记录ID。计划、审核、节假日例外、提醒与统计在 AstrBot 插件面板。"
+            "单词守护：发送学习截图自动识别；/单词打卡 新学20 复习40 为当天累计量；/单词进度；/单词身份。管理员：/单词绑定 成员ID [计划ID]、/单词计划、/单词确认 记录ID。不同成员自动使用独立计划；同一人的QQ号/UID属于身份别名。更多设置在插件面板。"
         )
 
     async def terminate(self):

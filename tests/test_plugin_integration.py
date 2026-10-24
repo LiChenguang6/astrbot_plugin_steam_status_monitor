@@ -170,6 +170,68 @@ async def test_actual_entry_clear_undated_image_automatically_records(plugin):
     assert "已记录" in e.replies[0] and "待审核" not in e.replies[0]
 
 
+async def test_multiple_accounts_bind_without_reusing_family_and_keep_separate_ledgers(plugin):
+    original = plugin.store.profiles()["family"]
+    admin = Event(sender="admin")
+    replies = [r async for r in plugin.bind(admin, target="second-member")]
+    assert "已绑定计划 member_" in replies[0]
+    plans = plugin.store.profiles()
+    assert len(plans) == 2 and plans["family"] == original
+    second = next(ident for ident in plans if ident != "family")
+    await plugin.ingest(Event(text="/单词打卡 新学20 复习40"), explicit=True)
+    await plugin.ingest(Event(text="/单词打卡 新学7 复习12", sender="second-member"), explicit=True)
+    assert plugin.store.totals("family")["2026-10-24"] == {"new": 20, "review": 40}
+    assert plugin.store.totals(second)["2026-10-24"] == {"new": 7, "review": 12}
+    # Repeating the binding reuses this account's plan, not a fresh empty ledger.
+    [r async for r in plugin.bind(admin, target="second-member")]
+    assert set(plugin.store.profiles()) == set(plans)
+    assert len(plugin.store.records()) == 2
+
+
+async def test_explicit_existing_plan_cannot_overwrite_another_account_even_without_history(plugin):
+    before = plugin.store.profiles()["family"]
+    replies = [r async for r in plugin.bind(Event(sender="admin"), target="other-member", plan="family")]
+    assert "不会覆盖" in replies[0]
+    assert plugin.store.profiles()["family"] == before
+
+
+async def test_rebinding_existing_alias_preserves_aliases_and_history(plugin):
+    await plugin.ingest(Event(text="/单词打卡 新学20 复习40"), explicit=True)
+    original = plugin.store.profiles()["family"]
+    plugin.store.save_profile("family", dict(original, enabled=False))
+    replies = [r async for r in plugin.bind(Event(sender="admin"), target="u_alias")]
+    assert "已绑定计划 family" in replies[0]
+    assert plugin.store.profiles()["family"]["user_ids"] == original["user_ids"]
+    assert plugin.store.profiles()["family"]["enabled"]
+    assert plugin.store.totals("family")["2026-10-24"]["new"] == 20
+
+
+async def test_same_member_can_have_separate_plans_on_different_bot_accounts(plugin):
+    other_bot = Event(sender="admin")
+    other_bot.get_platform_id = lambda: "qq-other"
+    other_bot.get_self_id = lambda: "bot-2"
+    other_bot.unified_msg_origin = "qq-other:GroupMessage:group-openid"
+    replies = [r async for r in plugin.bind(other_bot, target="sister-openid")]
+    assert "已绑定计划 member_" in replies[0]
+    assert len(plugin.store.profiles()) == 2
+    assert len(plugin.targets(Event())) == 1
+
+
+async def test_plan_list_is_scoped_to_current_bot_and_group(plugin, cfg):
+    plugin.store.save_profile("elsewhere", dict(cfg, group_id="elsewhere", session="qq-family:GroupMessage:elsewhere"))
+    replies = [r async for r in plugin.list_plans(Event(sender="admin"))]
+    assert "family" in replies[0] and "elsewhere" not in replies[0]
+
+
+async def test_create_only_profile_request_never_overwrites_existing_config(plugin, cfg):
+    register(plugin)
+    response, data = await call(
+        plugin, "profile", {"id": "family", "config": dict(cfg, name="replaced"), "create_only": True}
+    )
+    assert response.status_code == 400
+    assert plugin.store.profiles()["family"]["name"] == cfg["name"]
+
+
 async def test_unbound_sender_or_group_never_invokes_model(plugin):
     await plugin.ingest(Event([screenshot()], sender="someone-else"))
     await plugin.ingest(Event([screenshot()], group="another-group"))

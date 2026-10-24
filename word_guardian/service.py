@@ -114,7 +114,7 @@ class Scheduler:
                             .replace("{new}", str(state["remaining_new"]))
                             .replace("{review}", str(state["remaining_review"]))
                         )
-                        await self.send(cfg, text)
+                        await self.send(cfg, f"【{cfg['name']}】\n{text}")
                         self.store.mark_sent(ident, day, phase)
                     self.errors.pop(ident, None)
                 except asyncio.CancelledError:
